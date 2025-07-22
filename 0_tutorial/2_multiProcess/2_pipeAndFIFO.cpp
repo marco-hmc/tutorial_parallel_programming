@@ -74,33 +74,37 @@
       在某些情况下，如果父进程先于子进程退出，子进程将被init进程（或其他系统进程）收养，该进程将负责调用`wait()`来清理状态信息。
 */
 
-int main() {
-    char write_msg[BUFFER_SIZE] = "Hello, child!";
-    char read_msg[BUFFER_SIZE];
-    int fd[2];
+namespace PIPE {
+    void task() {
+        char write_msg[BUFFER_SIZE] = "Hello, child!";
+        char read_msg[BUFFER_SIZE];
+        int fd[2];
 
-    if (pipe(fd) == -1) {
-        std::cerr << "Pipe failed" << '\n';
-        return 1;
+        if (pipe(fd) == -1) {
+            std::cerr << "Pipe failed" << '\n';
+            return;
+        }
+
+        pid_t pid = fork();
+
+        if (pid < 0) {
+            std::cerr << "Fork Failed" << '\n';
+            return;
+        }
+        if (pid > 0) {
+            close(fd[READ_END]);
+            write(fd[WRITE_END], write_msg, strlen(write_msg) + 1);
+            close(fd[WRITE_END]);
+            wait(nullptr);
+        } else {
+            close(fd[WRITE_END]);
+            read(fd[READ_END], read_msg, BUFFER_SIZE);
+            std::cout << "read: " << read_msg << '\n';
+            close(fd[READ_END]);
+        }
     }
+}  // namespace PIPE
 
-    pid_t pid = fork();
+namespace FIFO {}
 
-    if (pid < 0) {
-        std::cerr << "Fork Failed" << '\n';
-        return 1;
-    }
-    if (pid > 0) {
-        close(fd[READ_END]);
-        write(fd[WRITE_END], write_msg, strlen(write_msg) + 1);
-        close(fd[WRITE_END]);
-        wait(nullptr);
-    } else {
-        close(fd[WRITE_END]);
-        read(fd[READ_END], read_msg, BUFFER_SIZE);
-        std::cout << "read: " << read_msg << '\n';
-        close(fd[READ_END]);
-    }
-
-    return 0;
-}
+int main() { return 0; }
