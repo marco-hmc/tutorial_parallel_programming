@@ -7,7 +7,7 @@ include(CTest)
 include(${CMAKE_SOURCE_DIR}/cmake/linkDll.cmake)
 enable_testing()
 
-add_subdirectory(2_benchmark)
+add_subdirectory(1_benchmark)
 
 find_package(spdlog REQUIRED)
 
