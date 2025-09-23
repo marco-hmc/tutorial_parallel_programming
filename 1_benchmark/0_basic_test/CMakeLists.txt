@@ -10,4 +10,3 @@ target_link_libraries(${PROJECT_NAME} benchmark::benchmark benchmark::benchmark_
 
 find_package(fmt REQUIRED)
 target_link_libraries(${PROJECT_NAME} fmt::fmt)
-# ADD_DLL_MODULE(${PROJECT_NAME} add)

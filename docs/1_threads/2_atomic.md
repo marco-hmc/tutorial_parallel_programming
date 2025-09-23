@@ -3,7 +3,7 @@ layout: post
 title: （二）多线程那些事儿：原子类型数据和内存序
 categories: C++
 related_posts: True
-tags: C++ threads
+tags: threads
 toc:
   sidebar: right
 ---

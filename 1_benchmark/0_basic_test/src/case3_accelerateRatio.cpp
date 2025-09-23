@@ -70,7 +70,7 @@ namespace {
         assert(value == counter);
     }
 
-    NO_OPTIMIZE void taskNear50ms() { countNumber(240'000'000); }
+    NO_OPTIMIZE void taskCntNumbers() { countNumber(240'000'000); }
 
     ThreadPool pool(std::thread::hardware_concurrency());
 
@@ -78,16 +78,15 @@ namespace {
 
 void case3_task_cost(benchmark::State& state) {
     for (auto _ : state) {
-        taskNear50ms();
+        taskCntNumbers();
     }
 }
 
 void case3_single_thread_cost(benchmark::State& state) {
     for (auto _ : state) {
         for (int i = 0; i < std::thread::hardware_concurrency(); ++i) {
-            taskNear50ms();
+            taskCntNumbers();
         }
-        taskNear50ms();
     }
 }
 
@@ -97,7 +96,7 @@ void case3_multi_thread_cost(benchmark::State& state) {
         threads.reserve(std::thread::hardware_concurrency());
 
         for (int i = 0; i < std::thread::hardware_concurrency(); ++i) {
-            threads.emplace_back([]() { taskNear50ms(); });
+            threads.emplace_back([]() { taskCntNumbers(); });
         }
         for (auto& thread : threads) {
             thread.join();
@@ -113,7 +112,7 @@ void case3_thread_pool_cost(benchmark::State& state) {
         // 提交任务到线程池
         for (int i = 0; i < totalTasks; ++i) {
             pool.enqueue([&counter] {
-                taskNear50ms();
+                taskCntNumbers();
                 counter.fetch_add(1, std::memory_order_relaxed);
             });
         }

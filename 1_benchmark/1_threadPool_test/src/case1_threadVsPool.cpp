@@ -57,5 +57,4 @@ void case1_pool(benchmark::State& state) {
 }
 
 // BENCHMARK(case1_no_pool)->Arg(50)->Arg(200)->Unit(benchmark::kMillisecond);
-
 // BENCHMARK(case1_pool)->Arg(50)->Arg(200)->Unit(benchmark::kMillisecond);

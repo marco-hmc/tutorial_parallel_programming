@@ -10,5 +10,4 @@ add_executable(${PROJECT_NAME} ${SOURCES})
 find_package(spdlog REQUIRED) 
 target_link_libraries(${PROJECT_NAME} spdlog::spdlog)
 
-# ADD_MODULE(${PROJECT_NAME} dynamicCast KCLRtti Rtti)
 ADD_LIB_MODULE(${PROJECT_NAME} tbbThreadPool threadPool)

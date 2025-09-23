@@ -1,8 +1,10 @@
 #include <algorithm>
 #include <boost/asio.hpp>
-#include <boost/bind.hpp>
+#include <boost/bind/bind.hpp>
 #include <boost/coroutine2/all.hpp>
+#include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -10,6 +12,7 @@
 #include <numeric>
 #include <queue>
 #include <random>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -47,6 +50,8 @@
 */
 
 using namespace std::chrono_literals;
+using namespace boost::
+    placeholders;  // 适配 <boost/bind/bind.hpp> 的占位符命名空间
 
 // ================================================================================================
 // 1. 基础协程概念 - 生成器模式
@@ -355,16 +360,16 @@ namespace AsyncCoroutines {
     template <typename T>
     class AsyncResult {
       private:
-        boost::coroutines2::coroutine<T>::push_type* sink_;
+        using coro_t = boost::coroutines2::coroutine<T>;
+        using push_t = typename coro_t::push_type;
+        push_t* sink_;
         bool completed_;
         T result_;
 
       public:
         AsyncResult() : sink_(nullptr), completed_(false) {}
 
-        void set_sink(boost::coroutines2::coroutine<T>::push_type* sink) {
-            sink_ = sink;
-        }
+        void set_sink(push_t* sink) { sink_ = sink; }
 
         void complete(T result) {
             result_ = std::move(result);
@@ -438,8 +443,6 @@ namespace AsyncCoroutines {
                 sink(response);
             }).detach();
         }
-    };
-
     // 协程管道：组合多个异步操作
     void async_pipeline_demo() {
         std::cout << "\n=== 异步协程管道演示 ===" << std::endl;

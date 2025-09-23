@@ -3,7 +3,7 @@ layout: post
 title: （一）多线程那些事儿：怎么用
 categories: C++
 related_posts: True
-tags: C++ threads
+tags: threads
 toc:
   sidebar: right
 ---

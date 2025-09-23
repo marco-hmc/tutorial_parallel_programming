@@ -3,7 +3,7 @@ layout: post
 title: （四）多线程那些事儿：并行库 tbb
 categories: C++
 related_posts: True
-tags: C++ threads doing
+tags: threads doing
 toc:
   sidebar: right
 ---

@@ -4,6 +4,13 @@
 
 #include "utils.h"
 
+/*
+Experiment 1: Measure the overhead of creating and destroying threads.
+    - Create a benchmark that spawns a specified number of threads (e.g., 100, 1000).
+    - Each thread should perform a simple task (e.g., sleep for a short duration) and then terminate.
+
+*/
+
 NO_OPTIMIZE void case1_create_threads(benchmark::State& state) {
     const int thread_count = state.range(0);
     for (auto _ : state) {
