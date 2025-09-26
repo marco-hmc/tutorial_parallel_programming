@@ -40,20 +40,22 @@ toc:
 
 事实上，当希望对一个`atomic`对象拷贝的时候，其实也只是取其值，而非整个原子对象。如果拷贝出来的值，仍希望是原子的，则再通过这个值构造一个新的原子对象就好了，而非拷贝。
 
+补充说明：C++ 标准出于语义明确性的设计选择，规定 `std::atomic<T>` 既非 CopyConstructible 也非 CopyAssignable，这与其实现是否借助内部锁并无直接必然关系。若需要“拷贝”其值，请使用 `auto v = a.load(order);`；若希望基于该值创建新的原子对象，可用值初始化 `std::atomic<T> b{v};`（两者彼此独立）。
+
 #### 1.4 atomic 类型能有什么成员函数？怎么用？
 
-| 操作 | 对应函数（接口） | 对应操作符 |
-| --- | --- | --- |
-| **读取** | `T load(memory_order order = memory_order_seq_cst) const noexcept;` | 转换操作符：`operator T() noexcept;` |
-| **存储** | `void store(T desired, memory_order order = memory_order_seq_cst) noexcept;` | 赋值操作符：`operator=(T desired) noexcept;` |
-| **加法/自增** | `T fetch_add(T arg, memory_order order = memory_order_seq_cst) noexcept;` | `operator+=(T arg) noexcept;`<br>后置自增 `operator++(int)` |
-| **减法/自减** | `T fetch_sub(T arg, memory_order order = memory_order_seq_cst) noexcept;` | `operator-=(T arg) noexcept;`<br>后置自减 `operator--(int)` |
-| **按位与** | `T fetch_and(T arg, memory_order order = memory_order_seq_cst) noexcept;` | `operator&=(T arg) noexcept;` |
-| **按位或** | `T fetch_or(T arg, memory_order order = memory_order_seq_cst) noexcept;` | `operator\|=(T arg) noexcept;` |
-| **按位异或** | `T fetch_xor(T arg, memory_order order = memory_order_seq_cst) noexcept;` | `operator^=(T arg) noexcept;` |
-| **交换** | `T exchange(T desired, memory_order order = memory_order_seq_cst) noexcept;` | ——（无对应操作符） |
-| **比较交换（弱）** | `bool compare_exchange_weak(T& expected, T desired, memory_order success, memory_order failure) noexcept;` | ——（无对应操作符） |
-| **比较交换（强）** | `bool compare_exchange_strong(T& expected, T desired, memory_order success, memory_order failure) noexcept;` | ——（无对应操作符） |
+| 操作               | 对应函数（接口）                                                                                             | 对应操作符                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| **读取**           | `T load(memory_order order = memory_order_seq_cst) const noexcept;`                                          | 转换操作符：`operator T() noexcept;`                        |
+| **存储**           | `void store(T desired, memory_order order = memory_order_seq_cst) noexcept;`                                 | 赋值操作符：`operator=(T desired) noexcept;`                |
+| **加法/自增**      | `T fetch_add(T arg, memory_order order = memory_order_seq_cst) noexcept;`                                    | `operator+=(T arg) noexcept;`<br>后置自增 `operator++(int)` |
+| **减法/自减**      | `T fetch_sub(T arg, memory_order order = memory_order_seq_cst) noexcept;`                                    | `operator-=(T arg) noexcept;`<br>后置自减 `operator--(int)` |
+| **按位与**         | `T fetch_and(T arg, memory_order order = memory_order_seq_cst) noexcept;`                                    | `operator&=(T arg) noexcept;`                               |
+| **按位或**         | `T fetch_or(T arg, memory_order order = memory_order_seq_cst) noexcept;`                                     | `operator\|=(T arg) noexcept;`                              |
+| **按位异或**       | `T fetch_xor(T arg, memory_order order = memory_order_seq_cst) noexcept;`                                    | `operator^=(T arg) noexcept;`                               |
+| **交换**           | `T exchange(T desired, memory_order order = memory_order_seq_cst) noexcept;`                                 | ——（无对应操作符）                                          |
+| **比较交换（弱）** | `bool compare_exchange_weak(T& expected, T desired, memory_order success, memory_order failure) noexcept;`   | ——（无对应操作符）                                          |
+| **比较交换（强）** | `bool compare_exchange_strong(T& expected, T desired, memory_order success, memory_order failure) noexcept;` | ——（无对应操作符）                                          |
 
 - **为什么同时提供函数接口，和操作符接口？** 操作符（如赋值和类型转换）默认使用严格的内存序`memory_order_seq_cst`），而函数版本允许开发者根据具体场景指定其他内存序（例如 relaxed、acquire/release），以便进行更细粒度的性能调优。
 
@@ -62,14 +64,15 @@ toc:
 - **基础要求** 要让自定义类型`T`能使用`std::atomic<T>`，该类型必须满足**Trivially Copyable**条件，具体包含以下几点： 1. **拷贝语义方面**：得有平凡的拷贝构造函数与赋值运算符。这意味着不能有用户自定义的拷贝或移动操作。 2. **析构函数方面**：析构函数必须是平凡的，不能包含任何自定义操作。 3. **基类与成员方面**：所有基类和非静态数据成员也都要是 Trivially Copyable 类型。
 
 - **尺寸与对齐限制**
-  - **尺寸方面**：通常情况下，类型`T`的大小得小于或等于`std::atomic<T>::is_always_lock_free`所规定的最大尺寸（一般是 8 字节）。
-  - **对齐方面**：类型`T`的对齐要求要和`alignof(std::atomic<T>)`保持一致，不然就需要使用`alignas`来进行显式对齐。
+  - **是否无锁**：`std::atomic<T>::is_always_lock_free` 是一个编译期常量布尔值，表示在该实现下此类型的原子操作是否“始终无锁”。也可通过对象上的 `is_lock_free()` 在运行期查询。标准并不要求一定无锁；当无法无锁时，库可退化为内部加锁实现。
+  - **常见情况**：主流平台对 1/2/4/8 字节整型与指针往往是无锁的，16 字节在部分架构也支持；超过平台能力时可能不是无锁实现。
+  - **对齐**：若 T 的自然对齐不足以支持无锁原子，可使用 `alignas` 强化对齐；即便对齐不足，`atomic<T>` 仍可用，但实现可能退化为加锁。
 
 ### 2. 内存序
 
 #### 2.1 什么是指令乱序？
 
-内存序本质上用于限制编译器以及 CPU 对指令执行顺序的重排程度。对指令执行顺序进行重排，本质上是为了提升单核性能。现代 CPU 采用诸如冒险预测以及超标量流水线等技术，导致指令乱序执行，使得代码操作不一定按照编写顺序依次发生。至于 CPU 指令乱序如何提升性能的具体原因，将在 “计算机组成 - CPU 章节” 中进一步探讨，此处暂不展开。
+内存序本质上用于限制编译器以及 CPU 对指令执行顺序的重排程度。对指令执行顺序进行重排，本质上是为了提升单核性能。现代 CPU 采用诸如分支预测以及超标量流水线等技术，导致指令乱序执行，使得代码操作不一定按照编写顺序依次发生。至于 CPU 指令乱序如何提升性能的具体原因，将在 “计算机组成 - CPU 章节” 中进一步探讨，此处暂不展开。
 
 在单线程场景下，C++作为编译型语言，能够充分利用程序上下文信息生成正确代码。例如`int a = 0; a = a + 1;`，编译器基于完整代码，必定能保证先定义后操作的顺序。而对于`a = a + 1; b = true;`这类情况，编译器无法确定`a`与`b`的计算先后顺序，但在单线程环境中，这种不确定性并无影响。
 
@@ -290,6 +293,8 @@ wait(): 如果 ready 条件满足，则继续执行；否则，让出 CPU。
    - 该内存序提供了全局的顺序一致性保证，即所有线程看到的内存操作顺序都是一致的。这是一种非常严格的内存序，它确保了所有线程对内存的访问都按照一个全局统一的顺序进行，就好像所有线程的操作都是顺序执行的一样。
    - 然而，由于这种严格的顺序保证需要额外的同步开销，所以 `memory_order_seq_cst` 通常是最强的内存序，但也可能对程序性能产生一定影响。在对性能要求极高且对操作顺序一致性要求不那么严格的场景下，可能需要权衡是否使用该内存序。
 
+- `memory_order_consume` 实际实现上长期存在分歧，主流编译器一般将其等同于 `acquire` 处理，标准也将其处于“暂不推荐使用”的状态。工程中建议直接使用 `acquire`/`release`。
+
 - **不同操作支持什么内存序？**
 
   1. **Store 操作（存储操作，即写操作）**：
@@ -324,14 +329,61 @@ wait(): 如果 ready 条件满足，则继续执行；否则，让出 CPU。
    - CPU 利用缓存一致性协议来保障跨核心的内存操作顺序。以 MESI 协议为例，MESI 是一种广泛应用于多核 CPU 缓存系统的协议，它定义了缓存行（Cache Line）的四种状态：Modified（已修改）、Exclusive（独占）、Shared（共享）和 Invalid（无效）。当一个 CPU 核心对内存中的数据进行读写操作时，MESI 协议会协调各个核心之间缓存的状态变化。比如，当一个核心修改了共享数据，该数据所在的缓存行状态会变为 Modified，同时其他核心中对应的缓存行状态变为 Invalid，这样就保证了其他核心在下次访问该数据时，能从主存或者拥有最新数据的核心缓存中获取到正确的值，从而确保了跨核心的内存操作顺序和数据一致性。**总结：CPU 通过缓存一致性协议（如 MESI 协议），协调各核心缓存状态变化，确保跨核心内存操作顺序与数据一致性。**
 3. **硬件层面**
    - 不同的硬件架构，像 x86 和 ARM，在对内存序的支持上存在差异。x86 架构通常对内存序有较强的默认保证，很多情况下无需额外的内存屏障指令就能满足较严格的内存序要求；而 ARM 架构则相对灵活，开发者可能需要更精细地控制内存序。为了让开发者能在不同硬件平台上以统一的方式编写代码，C++ 标准库通过抽象机制将这些硬件层面的差异进行了屏蔽。开发者在使用 C++ 的原子操作和内存序相关功能时，无需关心底层具体的硬件架构细节，只需要依据 C++ 标准库提供的接口和规则来确保程序的内存操作顺序符合需求，提高了代码的可移植性和通用性。**总结：不同硬件架构对内存序支持有别，C++ 标准库通过抽象屏蔽差异，提升代码可移植性与通用性。**
+4. **额外提示**：x86 的 TSO 内存模型对加载-存储有较强的默认保证，很多 `acquire/release` 原子在该平台无需显式栅栏即可满足；而“存储 → 加载”的跨越通常需要栅栏（或带 `lock` 前缀的原子 RMW）来抑制。
 
 #### 2.7 六种内存序怎么用？
 
-todo: 我前面展开内存序的时候更多是从理解和原理出发，并没有太结合实际说明什么场景下使用什么内存序。这一小段会补充说明。
+以下给出常见范式，按需取用：
+
+1. 发布-订阅（Publish/Subscribe）
+
+- 需求：线程 A 写入一批数据后，设置标志；线程 B 看到标志后读取数据。
+- 做法：A 在写完数据后 `flag.store(true, release)`；B 使用 `while(!flag.load(acquire)) {}`，随后读取数据。
+
+2. 计数器/统计量（无需跨线程顺序）
+
+- 需求：只需原子性，不关心与其他操作的先后关系。
+- 做法：`counter.fetch_add(1, relaxed)`；读取用 `relaxed` 或默认均可。
+
+3. 读-改-写（RMW）依赖值的后续逻辑
+
+- 需求：RMW 的结果影响后续读取/写入。
+- 做法：对 `fetch_add/exchange` 等使用 `memory_order_acq_rel`（或成功 `acq_rel`）。
+
+4. CAS 循环
+
+- 典型写法：
+
+```c++
+T expected = old;
+while (!atom.compare_exchange_weak(expected, desired,
+                                   std::memory_order_acq_rel,
+                                   std::memory_order_acquire)) {
+    // expected 已被更新为当前值，按需调整 desired 并重试
+}
+```
+
+- 说明：成功使用 `acq_rel`，失败侧通常用 `acquire`（或 `relaxed` 若失败路径不依赖读取到的值）。
+
+5. 全局统一顺序
+
+- 需求：便于推理，所有原子操作看到相同的全序。
+- 做法：`seq_cst`。简单但可能性能最弱。
+
+6. 栅栏（fence）桥接
+
+- 需求：将一批普通写与某个原子事件建立顺序。
+- 做法：写完非原子字段 →`atomic_thread_fence(release)`→ 发布原子标志（可 `relaxed`）；消费侧先获取标志（`acquire`）→`atomic_thread_fence(acquire)`→ 读取非原子字段。
 
 #### 2.8 什么是先行发生，什么是并行发生？
 
-todo：这个概念也是配合具体设置内存序的。之后补充。
+- sequenced-before：同一线程内的程序序（表达式求值的先后）。
+- synchronizes-with：带有 `release` 的写与带有 `acquire` 的读（读取到该写）之间建立同步关系。
+- happens-before（先行发生）：`sequenced-before` 与 `synchronizes-with` 的传递闭包。若 A happens-before B，则 A 的效果对 B 可见，并禁止相关重排。
+- inter-thread happens-before：跨线程的 happens-before（通常由同步原语建立）。
+- 并行发生（concurrency）：两个操作既不 happens-before 也不 happens-after，则并行发生；若访问同一对象且至少一方写入，则构成数据竞争，行为未定义。
+
+实践准则：使用互斥量、条件变量或 `release/acquire` 原子建立必要的 happens-before；避免对同一非原子对象并行发生的读写。
 
 ### 3. 原子幻觉
 
@@ -395,10 +447,6 @@ int main() {
 
 #### 3.2 CAS 技术
 
-针对上述的原子幻觉问题，可以用 CAS 解决（注意，CAS 是无锁编程的一种重要技巧，不一定和原子幻觉直接挂钩，这里只是通过原子幻觉问题，引入 CAS 技术。CAS 技术还可以用在其他无锁编程地方，比如说无锁的线程安全队列。）
-
-##### 3.2.1 什么是 CAS？
-
 通过前面的示例，我们已了解到具备原子性的变量可用于同步，发挥类似 `lock()/unlock()` 对的功能。而在实现无锁编程时，一种常见的借助原子变量达成此目的的技巧便是 CAS。
 
 CAS，即 Compare-And-Swap（比较并交换），是一项广泛应用的原子操作，常用于实现无锁编程。它依赖硬件支持的原子指令，以此保障多线程环境下的操作安全性。
@@ -417,9 +465,9 @@ bool CAS(int* addr, int expected, int desired) {
 
 在标准库中，上述 CAS 操作被封装成了以下两种形式：
 
-| 操作 | 对应函数（接口） | 对应操作符 |
-| --- | --- | --- |
-| **比较交换（弱）** | `bool compare_exchange_weak(T& expected, T desired, memory_order success, memory_order failure) noexcept;` | ——（无对应操作符） |
+| 操作               | 对应函数（接口）                                                                                             | 对应操作符         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ | ------------------ |
+| **比较交换（弱）** | `bool compare_exchange_weak(T& expected, T desired, memory_order success, memory_order failure) noexcept;`   | ——（无对应操作符） |
 | **比较交换（强）** | `bool compare_exchange_strong(T& expected, T desired, memory_order success, memory_order failure) noexcept;` | ——（无对应操作符） |
 
 **参数类型分析**： 在 `compare_exchange_weak()` 函数中，第一个参数 `expected` 采用引用类型，它实际上等价于前面自定义 `CAS(int* addr, int expect, int desired)` 函数中的 `expected` 参数，用于表示我们期望目标地址处的值。而 `compare_exchange_weak()` 函数中的 `desired` 参数同样对应自定义 `CAS` 函数中的 `desired` 参数，即我们想要替换成的新值。此外，`compare_exchange_weak()` 函数后面的 `success` 和 `failure` 参数均为内存序相关参数，分别用于指定当比较交换操作成功和失败时所采用的内存序。
@@ -492,64 +540,27 @@ CAS 操作是原子性的，它执行以下逻辑：
    - 如果不相等（说明其他线程已修改），则将`old_min`更新为当前值，返回`false`
 3. **循环重试**：如果 CAS 失败（返回`false`），则重新读取最新值并重试，直到成功
 
+- 备注：实际工程中建议为 `compare_exchange_*` 指定内存序，常见为成功 `acq_rel`、失败 `acquire`（或 `relaxed`）。
+
 #### 3.4 CAS 的 ABA 问题
 
-todo: ABA 问题之后看情况再补充。
+在这个场景中，即使出现 ABA 问题（值从 A 变为 B 再变回 A）也不会影响正确性，因为我们只关心值本身，而不关心它的变化过程。但在基于指针的无锁结构中，ABA 常会引发严重错误。
 
-在这个场景中，即使出现 ABA 问题（值从 A 变为 B 再变回 A）也不会影响正确性，因为我们只关心值本身，而不关心它的变化过程。但部分场景会在意这个问题。
-
-- **CAS 的 ABA 问题**
-  - 因为 CAS 需要在操作值的时候检查值有没有发生变化，如果没有发生变化则更新。但是一个值原来是 A，变成了 B，又变成了 A，那么使用 CAS 进行检查时会发现它的值没有发生变化，但实际上却变化了。
-  - CAS 只关注了比较前后的值是否改变，而无法清楚在此过程中变量的变更明细，这就是所谓的 ABA 问题。
-  - **解决思路**：
-    - 使用版本号（如 MySQL 的 MVCC）。在变量前面追加版本号，每次变量更新的时候把版本号加一，那么 A-B-A 就变成了 1A-2B-3A，从而解决 ABA 问题。
-  * **ABA 问题**
-    - CAS 需要在操作值的时候检查下值有没有发生变化，如果没有发生变化则更新，但是如果一个值原来是 A，变成了 B，又变成了 A，那么使用 CAS 进行检查时会发现它的值没有发生变化，但是实际上却变化了。这就是 CAS 的 ABA 问题
-    - 常见的解决思路是使用版本号。在变量前面追加上版本号，每次变量更新的时候把版本号加一，那么`A-B-A` 就会变成`1A-2B-3A`，由于每个过程值都会有对应的版本，所以我们在修改过程中需要传入期望版本和当前的值，数据库的多版本并发控制也类似
-    - 添加时间戳：添加世时间戳也可以解决。查询的时候把时间戳一起查出来，对的上才修改并且更新值的时候一起修改更新时间，这样也能保证，方法很多但是跟版本号都是异曲同工之妙
-  * 无限循环问题（自旋）
-    - 如果 CAS 不成功，则会原地自旋，如果长时间自旋会**给 CPU 带来非常大且没必要的开销**
-    - 可以使用 java8 中的 LongAdder，分段 CAS 和自动分段迁移
-    - 自旋 CAS 如果长时间不成功，会给 CPU 带来非常大的执行开销。如果 JVM 能支持处理器提供的 pause 指令那么效率会有一定的提升，pause 指令有两个作用，第一它可以延迟流水线执行指令（de-pipeline）,使 CPU 不会消耗过多的执行资源，延迟的时间取决于具体实现的版本，在一些处理器上延迟时间是零。第二它可以避免在退出循环的时候因内存顺序冲突（memory order violation）而引起 CPU 流水线被清空（CPU pipeline flush），从而提高 CPU 的执行效率
-  * **只能保证一个共享变量的原子操作**
-    - 只能保证一个共享变量的原子操作。当对一个共享变量执行操作时，我们可以使用循环 CAS 的方式来保证原子操作，但是对多个共享变量操作时，循环 CAS 就无法保证操作的原子性，这个时候就可以用锁，或者有一个取巧的办法，就是**把多个共享变量合并成一个共享变量来操作**。比如有两个共享变量 i=2，j=a，合并一下 ij=2a，然后用 CAS 来操作
-    - 可以用 AtomicReference (java)，这个是封装自定义对象的，多个变量可以放一个自定义对象里，然后他会检查这个对象的引用是不是同一个。如果多个线程同时对一个对象变量的引用进行赋值，用 AtomicReference 的 CAS 操作可以解决并发冲突问题
-
-```
-  * **ABA问题**
-    * CAS需要在操作值的时候检查下值有没有发生变化，如果没有发生变化则更新，但是如果一个值原来是A，变成了B，又变成了A，那么使用CAS进行检查时会发现它的值没有发生变化，但是实际上却变化了。这就是CAS的ABA问题
-    * 常见的解决思路是使用版本号。在变量前面追加上版本号，每次变量更新的时候把版本号加一，那么`A-B-A` 就会变成`1A-2B-3A`，由于每个过程值都会有对应的版本，所以我们在修改过程中需要传入期望版本和当前的值，数据库的多版本并发控制也类似
-    * 添加时间戳：添加世时间戳也可以解决。查询的时候把时间戳一起查出来，对的上才修改并且更新值的时候一起修改更新时间，这样也能保证，方法很多但是跟版本号都是异曲同工之妙
-  * 无限循环问题（自旋）
-    * 如果CAS不成功，则会原地自旋，如果长时间自旋会**给CPU带来非常大且没必要的开销**
-    * 可以使用java8中的LongAdder，分段CAS和自动分段迁移
-    * 自旋CAS如果长时间不成功，会给CPU带来非常大的执行开销。如果JVM能支持处理器提供的pause指令那么效率会有一定的提升，pause指令有两个作用，第一它可以延迟流水线执行指令（de-pipeline）,使CPU不会消耗过多的执行资源，延迟的时间取决于具体实现的版本，在一些处理器上延迟时间是零。第二它可以避免在退出循环的时候因内存顺序冲突（memory order violation）而引起CPU流水线被清空（CPU pipeline flush），从而提高CPU的执行效率
-  * **只能保证一个共享变量的原子操作**
-    * 只能保证一个共享变量的原子操作。当对一个共享变量执行操作时，我们可以使用循环CAS的方式来保证原子操作，但是对多个共享变量操作时，循环CAS就无法保证操作的原子性，这个时候就可以用锁，或者有一个取巧的办法，就是**把多个共享变量合并成一个共享变量来操作**。比如有两个共享变量 i=2，j=a，合并一下 ij=2a，然后用CAS来操作
-    * 可以用AtomicReference (java)，这个是封装自定义对象的，多个变量可以放一个自定义对象里，然后他会检查这个对象的引用是不是同一个。如果多个线程同时对一个对象变量的引用进行赋值，用AtomicReference的CAS操作可以解决并发冲突问题
-```
+- 问题本质：CAS 仅比较“当前值是否等于预期值”，无法分辨期间是否经历过其他变更。
+- 常见对策：
+  - 版本标记/标记指针（tagged pointer）：将指针与版本计数打包到一个原子字中，每次成功更新版本递增。
+  - Epoch/Hazard Pointers 等内存回收方案：避免节点被回收重用导致“回到旧值”的假象。
+  - 时间戳/序列号：与版本号思路类似。
 
 ### 4. 内存屏障
 
-todo: 内存屏障之后看情况再补充。
-
 内存屏障（也称为内存栅栏）是一种 CPU 指令，它确保屏障之前的所有操作完成后才执行屏障之后的操作。内存屏障可以防止编译器和处理器对指令重排序。
 
-- **Load Barrier**：加载屏障，确保所有在屏障前的读操作完成后，才执行屏障后的读操作。
-- **Store Barrier**：存储屏障，确保所有在屏障前的写操作完成后，才执行屏障后的写操作。
-- **Full Barrier**：全屏障，同时具有加载屏障和存储屏障的功能。
+- Load Barrier：加载屏障，确保屏障前的读先于屏障后的读。
+- Store Barrier：存储屏障，确保屏障前的写先于屏障后的写。
+- Full Barrier：全屏障，同时约束读与写。
 
-内存屏障(Memory Barrier),也被称为内存栅栏,是一种同步原语,用于防止指令重排,确保特定的内存操作顺序.
-
-在多核处理器系统中,为了提高性能,处理器和编译器可能会对指令进行重排.这种重排可能会导致在多线程环境中出现问题,因为一个线程看到的内存操作顺序可能与另一个线程看到的顺序不一致.
-
-内存屏障可以防止这种情况的发生.它可以强制特定的内存操作顺序,例如:
-
-- Load Barrier(加载屏障):保证在屏障之前的所有加载操作,都在屏障之后的加载操作之前完成.
-- Store Barrier(存储屏障):保证在屏障之前的所有存储操作,都在屏障之后的存储操作之前完成.
-- Full Barrier(全屏障):同时包含加载屏障和存储屏障,保证在屏障之前的所有内存操作,都在屏障之后的内存操作之前完成.
-
-在 C++中,你可以使用`std::atomic_thread_fence`函数来创建一个内存屏障.例如,`std::atomic_thread_fence(std::memory_order_acquire)`会创建一个加载屏障,`std::atomic_thread_fence(std::memory_order_release)`会创建一个存储屏障,`std::atomic_thread_fence(std::memory_order_seq_cst)`会创建一个全屏障.
+在 C++ 中，可用 `std::atomic_thread_fence(order)` 发出栅栏。但需注意：fence 与原子操作共同建立顺序，单独对非原子对象无效。通常优先用 `release/acquire` 的原子读写；仅在需要桥接非原子批量写入与一个原子事件时使用 fence 模式。
 
 ### 5. 总结
 
@@ -580,3 +591,85 @@ todo: 补充实测数据。
 3. **缓存一致性操作**：
    - `读取操作`：若 CPU 核心读取的缓存行状态为 Invalid，需从主内存或其他核心缓存获取最新数据。
    - `写入操作`：CPU 核心写入缓存行时，要通知其他核心将该缓存行状态设为 Invalid。
+
+#### 补充：内存序该怎么用（实战范式）
+
+- 发布-订阅（release/acquire）
+  - 生产者在发布标志前对数据的所有写入用 release 发布；消费者以 acquire 读取标志后，必然“看到”发布前的写入。
+
+```c++
+struct Payload { /*...*/ };
+Payload g_data; std::atomic<bool> ready{false};
+void producer(){ /* 填充 g_data */; ready.store(true, std::memory_order_release); }
+void consumer(){ while(!ready.load(std::memory_order_acquire)){} /* 使用 g_data */ }
+```
+
+- 计数器（relaxed）
+  - 只需原子性不需跨变量的可见性顺序时，使用 relaxed：
+
+```c++
+std::atomic<uint64_t> cnt{0};
+void hit(){ cnt.fetch_add(1, std::memory_order_relaxed); }
+```
+
+- 读改写/RMW（acq_rel）
+  - 如 fetch_add/fetch_or 既读取又发布新值，常用 memory_order_acq_rel；仅发布则用 release。
+- 全序（seq_cst）
+  - 最易用但限制最大；不确定时先用它，后续在有依据时降低内存序。
+- consume
+  - 实际上常被实现为 acquire，缺少可靠的编译器支持；工程上避免使用。
+- 栅栏（fence）桥接
+  - 当无法把“载荷数据”和“标志位”并入同一次原子操作时，可用 fence 桥接：
+
+```c++
+// 生产者
+payload = make();
+std::atomic_thread_fence(std::memory_order_release);
+flag.store(1, std::memory_order_relaxed);
+// 消费者
+while(flag.load(std::memory_order_relaxed)==0){}
+std::atomic_thread_fence(std::memory_order_acquire);
+use(payload);
+```
+
+#### CAS 的成功/失败内存序
+
+- compare*exchange*{weak,strong}(success, failure) 的 failure 序必须不强于 acquire，且不能是 release/acq_rel。
+- 常见范式：成功用 acq_rel（或 release），失败用 acquire（或 relaxed）。
+
+```c++
+std::atomic<int> x{0};
+int expected = 0;
+while(!x.compare_exchange_weak(expected, 1,
+                               std::memory_order_acq_rel,
+                               std::memory_order_acquire)){
+  // expected 已被更新为当前值，可据此决定是否重试/退避
+}
+```
+
+#### 先行发生（happens-before）要点
+
+- 同线程内的程序顺序（sequenced-before）不等于跨线程可见顺序。
+- 互斥量：unlock 对同一互斥量的下一次 lock 建立 happens-before。
+- 原子：对同一原子，release-store 与读取到该值的 acquire-load 建立 happens-before。
+- 传递性：A→B，B→C 则 A→C。
+- 数据竞争：两个线程对同一对象并发访问，且至少一个为写，且无同步，则为未定义行为。
+
+#### is_lock_free 与 is_always_lock_free
+
+- T::is_always_lock_free 是编译期常量，描述该原子类型在当前平台是否总是无锁。
+- obj.is_lock_free() 是运行期查询，可能受对象地址对齐等影响。
+- 是否“无锁”与尺寸/对齐相关；注意“无锁”≠“更快”。
+
+#### ABA 问题简述与对策
+
+- 现象：值从 A→B→A，CAS 仅比较值，误以为未变化。
+- 常见场景：无锁栈/队列的指针复用与内存回收。
+- 对策
+  - 版本标记（tagged pointer）：把指针与版本号一起比较交换。
+  - 安全回收：Hazard Pointers、Epoch Based Reclamation（QSBR/RCU 风格）。
+
+```c++
+struct TaggedPtr { uintptr_t ptr; uint32_t tag; };
+std::atomic<TaggedPtr> head; // CAS 同时比较 ptr 与 tag
+```

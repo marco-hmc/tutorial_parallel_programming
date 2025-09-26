@@ -1,6 +1,6 @@
 ---
 layout: post
-title: （三）多线程那些事儿：怎么用好
+title: （三）多线程那些事儿：实践与性能
 categories: C++
 related_posts: True
 tags: threads
@@ -8,7 +8,7 @@ toc:
   sidebar: right
 ---
 
-## （三）多线程那些事儿：怎么用好
+## （三）多线程那些事儿：实践与性能
 
 多线程的意义首先如何正确性，然后才是性能。本文将围绕线程安全和多线程性能展开。
 
@@ -17,19 +17,34 @@ toc:
 #### 1.1 线程让出后的虚假检查
 
 ```c++
+// 错误示例：检查未受保护，且按值遍历造成复制
 void Foo(std::vector<Foo> arr, int size) {
-    for(auto foo: arr){
-        if(!foo.is_valid())
+    for (auto foo : arr) {
+        if (!foo.is_valid())
             continue;
         {
             std::lock_guard<std::mutex> lock(mtx);
-        // Do something with foo.
+            // Do something with foo.
         }
     }
 }
 ```
 
-当因为占不到锁让出 cpu，再回来的时候`foo`难保就失效了。因此`foo`的有效性检查也得受`mutex`的保护。
+当因为占不到锁让出 CPU，再回来的时候`foo`难保就失效了。因此`foo`的有效性检查也得受`mutex`的保护；同时要按引用遍历避免复制。
+
+```c++
+// 正确示例：在锁内做有效性检查与使用，按引用遍历
+std::mutex mtx;
+struct Item { bool is_valid() const; /*...*/ };
+
+void process(std::vector<Item>& arr) {
+    for (auto& it : arr) {
+        std::lock_guard<std::mutex> lk(mtx);
+        if (!it.is_valid()) continue;
+        // 安全使用 it
+    }
+}
+```
 
 ### 2. 怎么用好多线程？
 
@@ -67,7 +82,7 @@ void Foo(std::vector<Foo> arr, int size) {
 
 #### 2.3 如何减小锁的粒度？
 
-**锁的粒度尽量细化**。以下是一个例子如何减少锁的粒度。比如说我有一个任务，在一个容器里面找到满足要求的元素。
+锁的粒度尽量细化。如下通过“局部聚合 + 批量提交”减少锁竞争。
 
 ```c++
 ThreadSafeVector vec{}; // vec.size() == 32
@@ -113,7 +128,7 @@ tbb::parallel_for(policy:_4_element_per_task,
 
 #### 2.5 什么是线程饥饿问题？
 
-```C++
+```c++
 std::vector<std::future<void>> futures;
 for (int i = 0; i < parent_task; ++i) {
     // add parentTask
@@ -334,13 +349,24 @@ void C_multi_thread_no_falseSharing_cost(benchmark::State& state) {
 2. **伪共享（False Sharing）**  
    当多个变量被放入同一缓存行，但不同线程分别修改这些变量时，尽管变量逻辑上独立，仍会因缓存行共享而相互影响，触发缓存失效。
 
+实战规避建议：
+
+- 使用填充/对齐隔离热写字段：
+
+```c++
+struct alignas(64) PaddedInt { int v; char pad[64 - sizeof(int)]; };
+```
+
+- 将不同线程写入的数据拆分到不同缓存行；批量合并结果。
+- 若以数组承载，每步 stride 设为缓存行大小的倍数，或改成 AoS→SoA 的数据布局。
+
 #### 2.8 多线程程序中持有锁，然后时间片耗光，让出 CPU，锁会释放吗？
 
 不会。 这个时候线程状态会切换到`Running`状态。一直持有锁，哪怕没有持有时间片。因此，锁的粒度需要精细控制，不要有多重的开销。
 
 #### 2.9 双重检查
 
-```c++
+````c++
 class Singleton {
 public:
     static Singleton* getInstance() {
@@ -363,23 +389,196 @@ public:
 ```
 
 #### 2.10 如果是单核环境，多线程编程是否就不会出现数据竞争的情况呢？
+
 即使只有一个 CPU 核心，多线程程序中如果 多个线程访问同一共享变量，且至少一个是写操作，且没有同步机制，依然会发生数据竞争。
 
 虽然单核 CPU **同一时刻只能执行一个线程**，但：
 
 1. **线程调度是抢占式的**：
 
-   * 操作系统会在多个线程之间频繁切换（即“上下文切换”），这可能发生在一条语句执行了一半时；
-   * 导致线程 A 修改某个变量到一半，被挂起，线程 B 也访问同一个变量，就可能出问题。
+   - 操作系统会在多个线程之间频繁切换（即“上下文切换”），这可能发生在一条语句执行了一半时；
+   - 导致线程 A 修改某个变量到一半，被挂起，线程 B 也访问同一个变量，就可能出问题。
 
 2. **读-改-写不是原子操作**：
 
-   * 举个例子：`x++` 实际执行为 `load → add → store` 三步；
-   * 如果线程 A 做到一半，线程 B 抢占了，就会覆盖结果。
+   - 举个例子：`x++` 实际执行为 `load → add → store` 三步；
+   - 如果线程 A 做到一半，线程 B 抢占了，就会覆盖结果。
 
 3. **编译器/CPU 有指令重排行为（store/load reordering）**：
 
-   * 即使在单核上，编译器为了优化，可能重排执行顺序；
-   * 如果没有使用 `std::atomic` 或内存屏障，结果也可能错误。
+   - 即使在单核上，编译器为了优化，可能重排执行顺序；
+   - 如果没有使用 `std::atomic` 或内存屏障，结果也可能错误。
 
 #### 2.11 线程抛出异常会怎么样？并行库抛出异常会怎么样？
+
+- `std::thread`：线程函数内未捕获异常将调用 `std::terminate`。需在线程函数内捕获，并通过 `std::promise`/回调上报。
+- `std::async`：异常被捕获并存入共享状态，在 `future.get()` 处重新抛出。
+- 线程池/并行库（如 TBB/OpenMP）：通常聚合并在调用点重新抛出或转换为库自定义异常；务必在并行边界做 try/catch 并审阅库文档的传播策略。
+
+### 3. 有效性检查与锁的正确用法
+
+- 检查-后操作必须在同一把锁内完成，避免 TOCTOU（检查到使用间的竞态）。
+- 只读场景避免在持锁状态下长时间遍历：必要时复制快照或分片并行，最终合并。
+- 使用谓词式等待避免虚假唤醒：cv.wait(lk, pred)。
+
+示例：安全弹出（检查与弹出同锁内完成）
+
+```c++
+int pop_front_safe(std::deque<int>& q, std::mutex& m) {
+  std::unique_lock<std::mutex> lk(m);
+  if (q.empty()) return -1; // 或者等待条件变量
+  int v = q.front();
+  q.pop_front();
+  return v;
+}
+````
+
+### 4. 并行收集：局部聚合 + 批量合并
+
+- 目标：减少全局锁竞争，避免每条记录都加锁。
+- 做法：每个线程使用局部缓冲（vector/local bucket），任务结束后一次性合并到全局容器。
+
+示例骨架
+
+```c++
+std::mutex m; std::vector<Item> global;
+parallel_for(tasks, [&](Task t){
+  std::vector<Item> local;
+  // 线程内自由 push 到 local
+  // ...
+  if (!local.empty()) {
+    std::lock_guard<std::mutex> lk(m);
+    global.insert(global.end(), local.begin(), local.end());
+  }
+});
+```
+
+### 5. 双重检查锁（DCLP）的正确替代方案
+
+- 函数内静态：最简单、安全
+
+```c++
+T& instance() { static T x; return x; }
+```
+
+- std::call_once：显式一次性初始化
+
+```c++
+std::once_flag flag; std::unique_ptr<T> ptr;
+void init(){ ptr.reset(new T); }
+T& get(){ std::call_once(flag, init); return *ptr; }
+```
+
+- 如必须用指针与原子发布，需保证发布-订阅的内存序与对象完全构造后再发布（release-store / acquire-load），更建议使用上述两种简单方案。
+
+### 6. 伪共享（False Sharing）规避
+
+- 原因：不同线程频繁写入落在同一缓存行的不同变量，导致缓存行在核间抖动。
+- 对策
+  - 对齐与填充：alignas(64) 或手动填充，确保热写变量落在不同缓存行。
+  - 分片（sharding）：按线程/分区写入不同片区，最后再合并结果。
+  - 数据布局：SoA/分桶而非 AoS，减少跨核共享写热点。示例
+
+```c++
+struct alignas(64) Counter { std::atomic<long long> v{0}; };
+std::vector<Counter> counters(num_threads);
+```
+
+### 7. 异常传播与收敛（并行任务）
+
+- 线程函数中捕获全部异常，统一上报：
+  - 使用 std::promise<std::exception_ptr> 或将异常存入共享容器（受互斥保护）。
+  - 使用 std::packaged_task/std::async，异常在 future.get() 处重抛。
+- 收敛点统一处理：在 join/wait 后检查异常集合，择一或逐个 rethrow。
+
+示例：exception_ptr 收敛
+
+```c++
+std::mutex em; std::vector<std::exception_ptr> eps;
+auto worker = [&](){
+  try { /* ... */ }
+  catch(...) { std::lock_guard<std::mutex> lk(em); eps.push_back(std::current_exception()); }
+};
+// 启动并 join 所有线程...
+if (!eps.empty()) std::rethrow_exception(eps.front());
+```
+
+### 8. 其他实践要点
+
+- 缩小临界区；优先使用 RAII 锁管理；多把锁用 std::scoped_lock。
+- 谨慎使用原子与内存序：优先使用 mutex/条件变量；仅在确定可获益时用原子发布-订阅。
+- 选择合适的任务粒度：过细导致调度/同步开销吞噬收益；合并微任务或分阶段流水线。
+- 线程池避免递归等待子任务：倾向 work-stealing 或非阻塞收敛，防止饥饿。
+
+## 同锁的校验与使用（Check-then-Use 必须同锁）
+
+- 读取“是否存在/是否有效”的检查与随后的使用需要在同一临界区内完成。
+- 典型范式：
+
+```c++
+std::mutex m; std::unordered_map<int, Value> map;
+std::optional<Value> get(int k){
+  std::scoped_lock lk(m);
+  if(auto it = map.find(k); it!=map.end()) return it->second; // 检查与使用同锁
+  return std::nullopt;
+}
+```
+
+## 并行收集：局部聚合 + 批量合并
+
+- 先在线程局部聚合（vector/map/计数），再在少量同步点批量合并，避免细粒度锁竞争。
+
+```c++
+std::vector<int> data = /*...*/;
+std::mutex m; std::vector<int> out;
+
+parallel_for_each(data.begin(), data.end(), [&](int x){
+  std::vector<int> local; // 线程局部
+  // ...处理并推入 local...
+  if(!local.empty()){
+    std::scoped_lock lk(m);
+    out.insert(out.end(), local.begin(), local.end());
+  }
+});
+```
+
+- Map/计数可采用每线程 std::unordered_map 再统一 reduce。
+
+## 双检锁的替代方案
+
+- 首选函数内静态局部（C++11 起线程安全）：
+
+```c++
+Foo& instance(){ static Foo inst; return inst; }
+```
+
+- 或使用 std::call_once：
+
+```c++
+std::once_flag flag; std::unique_ptr<Foo> g;
+Foo& instance(){ std::call_once(flag, []{ g = std::make_unique<Foo>(); }); return *g; }
+```
+
+## 伪共享对策
+
+- 将频繁写的独立计数/状态放入不同 cache line：
+  - 对象填充/对齐：struct alignas(64) Counter { std::atomic<long> v; char pad[64]; };
+  - 数组分片：按线程 id/NUMA 节点分片聚合，最后汇总。
+  - 避免把热点写字段和只读字段放在同一结构体内。
+
+## 异常的收敛与传播
+
+- 在线程内部捕获，返回到收敛点统一处理：
+
+```c++
+std::vector<std::exception_ptr> eps; std::mutex em;
+std::vector<std::jthread> workers;
+for(auto& task : tasks){
+  workers.emplace_back([&]{
+    try{ task(); }
+    catch(...){ std::scoped_lock lk(em); eps.push_back(std::current_exception()); }
+  });
+}
+for(auto& t : workers) t.join();
+for(auto& ep: eps) if(ep) std::rethrow_exception(ep);
+```
