@@ -11,6 +11,7 @@
 #include <random>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 /*
@@ -52,7 +53,6 @@ using namespace std::chrono_literals;
 
 namespace BasicCoroutines {
 
-    // 简单生成器协程 - 产生斐波那契数列
     struct Generator {
         struct promise_type {
             int current_value;
@@ -82,7 +82,6 @@ namespace BasicCoroutines {
             if (h_) h_.destroy();
         }
 
-        // 移动构造和赋值
         Generator(Generator&& other) noexcept
             : h_(std::exchange(other.h_, {})) {}
         Generator& operator=(Generator&& other) noexcept {
@@ -93,11 +92,8 @@ namespace BasicCoroutines {
             return *this;
         }
 
-        // 禁止拷贝
-        Generator(const Generator&) = delete;
         Generator& operator=(const Generator&) = delete;
 
-        // 迭代器接口
         struct iterator {
             std::coroutine_handle<promise_type> h_;
 
@@ -111,7 +107,14 @@ namespace BasicCoroutines {
             int operator*() const { return h_.promise().current_value; }
 
             bool operator==(const iterator& other) const {
-                return h_.done() == other.h_.done();
+                if (h_.address() == other.h_.address()) return true;
+                if (!h_) return other.h_ ? other.h_.done() : true;
+                if (!other.h_) return h_.done();
+                return h_.done() && other.h_.done();
+            }
+
+            bool operator!=(const iterator& other) const {
+                return !(*this == other);
             }
         };
 
@@ -169,16 +172,34 @@ namespace AsyncCoroutines {
     template <typename T>
     struct Task {
         struct promise_type {
-            T result;
+            std::optional<T> result;
             std::exception_ptr exception;
+            // 原子保存等待者的地址，避免竞态（不能直接原子保存 coroutine_handle）
+            std::atomic<void*> awaiting{nullptr};
 
             Task get_return_object() {
                 return Task{
                     std::coroutine_handle<promise_type>::from_promise(*this)};
             }
 
-            std::suspend_never initial_suspend() { return {}; }
-            std::suspend_always final_suspend() noexcept { return {}; }
+            // 不在创建时立即执行协程，避免与 awaiter 的竞态
+            std::suspend_always initial_suspend() noexcept { return {}; }
+
+            // 在协程结束时，如果有等待者则安全地 resume 它
+            struct final_awaiter {
+                bool await_ready() noexcept { return false; }
+                void await_suspend(
+                    std::coroutine_handle<promise_type> h) noexcept {
+                    void* addr =
+                        h.promise().awaiting.load(std::memory_order_acquire);
+                    if (addr) {
+                        std::coroutine_handle<>::from_address(addr).resume();
+                    }
+                }
+                void await_resume() noexcept {}
+            };
+
+            final_awaiter final_suspend() noexcept { return {}; }
 
             void unhandled_exception() { exception = std::current_exception(); }
 
@@ -207,25 +228,117 @@ namespace AsyncCoroutines {
         Task(const Task&) = delete;
         Task& operator=(const Task&) = delete;
 
-        // 获取结果
+        // 获取结果（同步调用者主动启动协程直到完成）
         T get() {
             if (!h_.done()) {
+                // 同步启动协程，循环直至完成（示例代码的简单策略）
                 h_.resume();
+                while (!h_.done()) {
+                    // 如果协程在外部事件中等待，这里可能需要更复杂的等待机制
+                    std::this_thread::yield();
+                }
             }
 
             if (h_.promise().exception) {
                 std::rethrow_exception(h_.promise().exception);
             }
 
-            return std::move(h_.promise().result);
+            return std::move(h_.promise().result.value());
         }
 
-        // 等待完成
+        // await 接口
+        bool await_ready() { return h_.done(); }
+
+        // 保存等待者的地址（原子），然后启动被等待的协程（如果尚未完成）
+        void await_suspend(std::coroutine_handle<> awaiter) {
+            h_.promise().awaiting.store(awaiter.address(),
+                                        std::memory_order_release);
+            if (!h_.done()) {
+                h_.resume();
+            }
+        }
+
+        T await_resume() { return get(); }
+    };
+
+    // Task<void> 特化
+    template <>
+    struct Task<void> {
+        struct promise_type {
+            std::exception_ptr exception;
+            std::atomic<void*> awaiting{nullptr};
+
+            Task get_return_object() {
+                return Task{
+                    std::coroutine_handle<promise_type>::from_promise(*this)};
+            }
+
+            std::suspend_always initial_suspend() noexcept { return {}; }
+
+            struct final_awaiter {
+                bool await_ready() noexcept { return false; }
+                void await_suspend(
+                    std::coroutine_handle<promise_type> h) noexcept {
+                    void* addr =
+                        h.promise().awaiting.load(std::memory_order_acquire);
+                    if (addr) {
+                        std::coroutine_handle<>::from_address(addr).resume();
+                    }
+                }
+                void await_resume() noexcept {}
+            };
+
+            final_awaiter final_suspend() noexcept { return {}; }
+
+            void unhandled_exception() { exception = std::current_exception(); }
+
+            void return_void() {}
+        };
+
+        std::coroutine_handle<promise_type> h_;
+
+        explicit Task(std::coroutine_handle<promise_type> h) : h_(h) {}
+
+        ~Task() {
+            if (h_) h_.destroy();
+        }
+
+        // 移动语义
+        Task(Task&& other) noexcept : h_(std::exchange(other.h_, {})) {}
+        Task& operator=(Task&& other) noexcept {
+            if (this != &other) {
+                if (h_) h_.destroy();
+                h_ = std::exchange(other.h_, {});
+            }
+            return *this;
+        }
+
+        // 禁止拷贝
+        Task(const Task&) = delete;
+        Task& operator=(const Task&) = delete;
+
+        // 等待完成并检查异常
+        void get() {
+            if (!h_.done()) {
+                h_.resume();
+                while (!h_.done()) {
+                    std::this_thread::yield();
+                }
+            }
+            if (h_.promise().exception) {
+                std::rethrow_exception(h_.promise().exception);
+            }
+        }
+
         bool await_ready() { return h_.done(); }
         void await_suspend(std::coroutine_handle<> awaiter) {
-            // 可以在这里实现更复杂的调度逻辑
+            h_.promise().awaiting.store(awaiter.address(),
+                                        std::memory_order_release);
+            if (!h_.done()) {
+                h_.resume();
+            }
         }
-        T await_resume() { return get(); }
+        void await_resume() { get(); }
     };
 
     // 简单的异步操作模拟
@@ -1104,26 +1217,26 @@ int main() {
         // 基础协程概念
         BasicCoroutines::demonstrateBasicGenerator();
 
-        // 异步协程
-        AsyncCoroutines::demonstrateAsyncTask();
+        // // 异步协程
+        // AsyncCoroutines::demonstrateAsyncTask();
 
-        // 高级可等待对象
-        AdvancedCoroutines::demonstrateAdvancedAwaitables();
+        // // 高级可等待对象
+        // AdvancedCoroutines::demonstrateAdvancedAwaitables();
 
-        // 协程调度器
-        CoroutineScheduler::demonstrateScheduler();
+        // // 协程调度器
+        // CoroutineScheduler::demonstrateScheduler();
 
-        // 协程状态机
-        CoroutineStateMachine::demonstrateStateMachine();
+        // // 协程状态机
+        // CoroutineStateMachine::demonstrateStateMachine();
 
-        // 错误处理
-        CoroutineErrorHandling::demonstrateErrorHandling();
+        // // 错误处理
+        // CoroutineErrorHandling::demonstrateErrorHandling();
 
-        // 实际应用示例
-        PracticalExample::demonstratePracticalExample();
+        // // 实际应用示例
+        // PracticalExample::demonstratePracticalExample();
 
-        // 最佳实践
-        BestPractices::demonstrate_best_practices();
+        // // 最佳实践
+        // BestPractices::demonstrate_best_practices();
 
     } catch (const std::exception& e) {
         std::cout << "程序异常: " << e.what() << std::endl;
