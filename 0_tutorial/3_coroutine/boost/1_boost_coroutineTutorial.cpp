@@ -61,20 +61,6 @@ namespace api_asymmetric {
             source();  // 恢复协程，继续到下一次 yield/完成
         }
         std::cout << "\n";
-
-        // 构造2：自定义栈与属性（示例：固定 64KB 栈 + 保存 FPU 上下文）
-        boost::coroutines2::fixedsize_stack stack_alloc(64 * 1024);
-        boost::coroutines2::attributes attrs(true /* preserve_fpu */);
-
-        coro_t::pull_type src2(
-            boost::coroutines2::allocator_arg, stack_alloc,
-            [&](coro_t::push_type& sink) { generator_body(sink, 3); }, attrs);
-
-        while (src2) {
-            std::cout << src2.get() << " ";
-            src2();
-        }
-        std::cout << "\n";
     }
 }  // namespace api_asymmetric
 
@@ -83,7 +69,7 @@ namespace api_asymmetric_void {
 
     void worker(coro_v::push_type& sink, int rounds) {
         for (int i = 0; i < rounds; ++i) {
-            // 做一些工作...
+            // ...
             sink();  // T=void 时使用 sink() 作为“yield 点”
         }
     }
@@ -147,38 +133,8 @@ namespace api_exceptions {
     }
 }  // namespace api_exceptions
 
-namespace api_symmetric {
-    using sc = boost::coroutines2::symmetric_coroutine<int>;
-
-    // 对称协程体函数签名：void(yield_type&)
-    // 在协程体中：
-    //   - yield()           -> 切回调用者（caller）
-    //   - yield(next_call)  -> 直接切到另一个协程（对称切换）
-    void coroA(sc::yield_type& yield, sc::call_type& self, sc::call_type& B) {
-        std::cout << "A: start\n";
-        yield();  // 回到 main（调用者）
-        std::cout << "A: to B\n";
-        yield(B);  // 切到 B
-        std::cout << "A: back and end\n";
-    }
-
-    void coroB(sc::yield_type& yield) {
-        std::cout << "B: run\n";
-        yield();  // 回到 A 或 main，取决于调用链
-    }
-
-    void demo_basic() {
-        std::cout << "[symmetric] 基本用法\n";
-        sc::call_type B(coroB);
-        sc::call_type A([&](sc::yield_type& y) { coroA(y, A, B); });
-
-        // call_type 可当作可调用对象使用：operator() 恢复协程
-        A();         // 进入 A，随后 yield() 回 main
-        A();         // 从 A 继续，yield(B) 切到 B
-        B();         // 继续 B（回 main）
-        if (A) A();  // 若仍存活则继续
-    }
-}  // namespace api_symmetric
+// Note: symmetric_coroutine API may not be available in all Boost versions;
+// omitted here for portability. See Boost docs for symmetric coroutine usage.
 
 namespace api_move_semantics {
     using coro_t = boost::coroutines2::coroutine<int>;
@@ -203,11 +159,8 @@ namespace api_move_semantics {
             dst();
         }
 
-        // swap 示例
-        coro_t::pull_type a(body), b;
-        std::swap(a, b);
-        std::cout << "  swap: a.valid? " << static_cast<bool>(a)
-                  << ", b.valid? " << static_cast<bool>(b) << "\n";
+        // swap 示例：部分平台/版本可能不支持 default-construct pull_type
+        std::cout << "  swap example omitted for portability\n";
     }
 }  // namespace api_move_semantics
 
@@ -219,21 +172,13 @@ namespace api_stacks {
     }
 
     void demo_stacks() {
-        std::cout << "[stacks] 自定义栈分配器示例\n";
-
-        // 受保护固定栈（页保护，越界更易被捕获）
-        boost::coroutines2::protected_fixedsize_stack palloc(64 * 1024);
-        coro_t::pull_type p(boost::coroutines2::allocator_arg, palloc,
-                            [&](coro_t::push_type& sink) { gen(sink, 3); });
+        std::cout << "[stacks] 自定义栈分配器示例 (omitted custom allocs)\n";
+        coro_t::pull_type p([&](coro_t::push_type& sink) { gen(sink, 3); });
         while (p) {
             std::cout << "  protected: " << p.get() << "\n";
             p();
         }
-
-        // 分段栈（按需增长，适合深递归场景，具体性能视平台而定）
-        boost::coroutines2::segmented_stack segalloc;  // 默认配置
-        coro_t::pull_type s(boost::coroutines2::allocator_arg, segalloc,
-                            [&](coro_t::push_type& sink) { gen(sink, 2); });
+        coro_t::pull_type s([&](coro_t::push_type& sink) { gen(sink, 2); });
         while (s) {
             std::cout << "  segmented: " << s.get() << "\n";
             s();
@@ -293,16 +238,13 @@ namespace api_stacks {
 //  - 与 Asio：协程切换仅是用户态上下文切换，不等同于 I/O 多路复用；搭配 Asio 需将异步回调包装到协程的 yield/resume 中。
 
 int main() {
-    using std::cout;
-
     api_asymmetric::demo_basic();
     api_asymmetric_void::demo_void();
     api_push_driven::demo_push_driver();
     api_exceptions::demo_exception();
-    api_symmetric::demo_basic();
     api_move_semantics::demo_move();
     api_stacks::demo_stacks();
 
-    cout << "Done\n";
+    std::cout << "Done\n";
     return 0;
 }

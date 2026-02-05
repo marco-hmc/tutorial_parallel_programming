@@ -343,11 +343,8 @@ namespace AsyncCoroutines {
 
     // 简单的异步操作模拟
     Task<int> async_compute(int value) {
-        std::cout << "[AsyncCompute] 开始计算: " << value << std::endl;
-
         // 模拟异步工作
         std::this_thread::sleep_for(100ms);
-
         int result = value * value;
         std::cout << "[AsyncCompute] 计算完成: " << result << std::endl;
 
@@ -357,11 +354,7 @@ namespace AsyncCoroutines {
     // 链式异步操作
     Task<std::string> async_process_chain(int input) {
         std::cout << "[ProcessChain] 开始处理: " << input << std::endl;
-
-        // 第一步：计算平方
         auto squared = co_await async_compute(input);
-
-        // 第二步：转换为字符串
         std::this_thread::sleep_for(50ms);
         auto result = "结果: " + std::to_string(squared);
 
@@ -371,16 +364,11 @@ namespace AsyncCoroutines {
 
     void demonstrateAsyncTask() {
         std::cout << "\n=== 异步任务演示 ===" << std::endl;
-
-        // 创建多个异步任务
         auto task1 = async_compute(5);
         auto task2 = async_process_chain(7);
-
-        // 等待结果
         std::cout << "任务1结果: " << task1.get() << std::endl;
         std::cout << "任务2结果: " << task2.get() << std::endl;
     }
-
 }  // namespace AsyncCoroutines
 
 // ================================================================================================

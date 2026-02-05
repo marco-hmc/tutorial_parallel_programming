@@ -8,6 +8,8 @@ toc:
   sidebar: right
 ---
 
+[toc]
+
 ## （五）多线程那些事儿：并行库 openmp
 
 ### 1. concepts

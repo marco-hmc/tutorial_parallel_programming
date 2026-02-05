@@ -65,7 +65,6 @@ namespace BasicCoroutines {
     // 简单的数字生成器
     void fibonacci_generator(coro_t::push_type& sink) {
         int a = 0, b = 1;
-
         while (true) {
             sink(a);  // yield value
             auto next = a + b;
@@ -117,12 +116,12 @@ namespace BasicCoroutines {
 
         iterator begin() {
             if (source_) {
-                return iterator(&source_);
+                return {&source_};
             }
             return end();
         }
 
-        iterator end() { return iterator(); }
+        static iterator end() { return {}; }
     };
 
     void demonstrateBasicCoroutines() {
@@ -142,6 +141,7 @@ namespace BasicCoroutines {
         coro_t::pull_type range_seq(
             [](coro_t::push_type& sink) { range_generator(sink, 1, 10, 2); });
 
+        // 使用自定义 NumberGenerator 类
         for (auto value : NumberGenerator([](coro_t::push_type& sink) {
                  range_generator(sink, 1, 10, 2);
              })) {
@@ -443,6 +443,8 @@ namespace AsyncCoroutines {
                 sink(response);
             }).detach();
         }
+    };
+
     // 协程管道：组合多个异步操作
     void async_pipeline_demo() {
         std::cout << "\n=== 异步协程管道演示 ===" << std::endl;
@@ -483,9 +485,7 @@ namespace AsyncCoroutines {
     }
 
     void demonstrateAsyncCoroutines() { async_pipeline_demo(); }
-
 }  // namespace AsyncCoroutines
-
 // ================================================================================================
 // 5. 状态机协程
 // ================================================================================================
